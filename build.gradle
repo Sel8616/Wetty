@@ -1,0 +1,44 @@
+group 'cn.sel'
+version '0.1'
+
+apply plugin: 'war'
+
+repositories {
+    jcenter()
+}
+
+ext {
+    ver_servlet = '3.1.0'
+    ver_jetty = '+'
+    ver_spring = '+'
+    ver_jackson = '+'
+}
+
+dependencies {
+    compile fileTree(dir: 'lib', include: ['*.jar'])
+    compile "javax.servlet:javax.servlet-api:${ver_servlet}",
+            "org.eclipse.jetty:jetty-webapp:${ver_jetty}",
+            "org.springframework:spring-webmvc:${ver_spring}",
+            'com.fasterxml.jackson.core:jackson-core:+',
+            'com.fasterxml.jackson.core:jackson-databind:+',
+            'com.fasterxml.jackson.core:jackson-annotations:+'
+}
+
+war {
+    clean
+    manifest {
+        attributes 'Manifest-Version': '0.1',
+                'Main-Class': 'cn.sel.spretty.Main',
+                'Created-By': 'cn.sel'
+    }
+    from("$buildDir/classes/main/cn/sel/spretty") {
+        include("Main.class", "Main\$*.class")
+        into("/cn/sel/spretty")
+    }
+    exclude("$buildDir/classes/main/cn/sel/spretty/Main.class")
+    from {
+        configurations.compile.filter { it.name.matches("(jetty.*|javax\\.servlet.*)\\.jar") }.collect {
+            zipTree(it)
+        }
+    }
+}
