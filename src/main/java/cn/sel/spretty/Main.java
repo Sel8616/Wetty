@@ -26,39 +26,39 @@ package cn.sel.spretty;
 import org.eclipse.jetty.server.NetworkTrafficServerConnector;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.webapp.WebAppContext;
-import sun.misc.Signal;
-import sun.misc.SignalHandler;
 
 import java.io.*;
 import java.lang.management.ManagementFactory;
 import java.lang.management.RuntimeMXBean;
 import java.net.URL;
 import java.net.URLDecoder;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
 import java.security.ProtectionDomain;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 import java.util.regex.Pattern;
 
 /**
  */
-public class Main implements SignalHandler
+public class Main
 {
     //region Constants & Fields
+    private static final String OS_NAME = System.getProperty("os.name");
     private static final String PROJECT_NAME = "Spretty";
+    private static final String DEFAULT_ID = "UNKNOWN_ID";
+    private static final Pattern REG_INST_ID = Pattern.compile("[A-Za-z0-9]{1,32}");
+    private static final Pattern REG_CONTEXT = Pattern.compile("[/]?[A-Za-z][A-Za-z0-9_-]*");
     private static final ProtectionDomain PROTECTION_DOMAIN = Main.class.getProtectionDomain();
-    private static final Pattern REG_CONTEXT = Pattern.compile("[/]?[A-Za-z0-9_-]*");
-    private static final int SIGN_STATUS = 1;
-    private static final int SIGN_RESTART = 12;
-    private static final int SIGN_SHUTDOWN = 15;
-    private static final int SIGN_STOP = 19;
-    private static final int SIGN_KILL = 9;
-    private static final String PID_FILENAME = "pid.pid";
     private static final Server JETTY_SERVER = new Server();
-    private static final Map<String, String> ARGS = new HashMap<>();
-    private static final RandomAccessFile PID_FILE;
-    private static final String WAR_FILENAME;
+    private static final int SIGN_TERM = 15;
+    private static final int SIGN_KILL = 9;
     private static final File WORK_DIR;
+    private static final String PID_FILENAME;
+    private static final String WAR_FILENAME;
     private static final int CUR_PID;
+    private static FileChannel PID_CHANNEL;
+    private static FileLock PID_LOCK;
     //endregion
     //
     //region Initialization
@@ -66,39 +66,28 @@ public class Main implements SignalHandler
     {
         try
         {
-            installSignals();
-            CUR_PID = getCurPID();
-            WAR_FILENAME = getWarFilename();
-            String curDir = new File(WAR_FILENAME).getParent();
-            WORK_DIR = new File(curDir, "work");
-            PID_FILE = new RandomAccessFile(curDir + File.separator + PID_FILENAME, "rw");
+            if(isLinux() || isWindows())
+            {
+                CUR_PID = getCurPid();
+                WAR_FILENAME = getWarFilename();
+                String curDir = new File(WAR_FILENAME).getParent();
+                WORK_DIR = new File(curDir, "work");
+                PID_FILENAME = curDir + File.separator + "pid.pid";
+            } else
+            {
+                throw new IllegalStateException("Unsupported OS!");
+            }
         } catch(Exception e)
         {
-            throw new IllegalStateException("", e);
+            throw new IllegalStateException("Initialization failed!", e);
         }
     }
-    private SignalHandler signalHandler;
-
-    private static void installSignals()
-    {
-        install("HUP");
-        install("USR2");
-        install("TERM");
-    }
-
-    public static void install(String signalName)
-    {
-        Signal signal = new Signal(signalName);
-        Main instance = new Main();
-        instance.signalHandler = Signal.handle(signal, instance);
-    }
-
-    private static int getCurPID()
+    private static int getCurPid()
     {
         RuntimeMXBean runtime = ManagementFactory.getRuntimeMXBean();
         String name = runtime.getName();
         int index = name.indexOf('@');
-        if(index != -1)
+        if(index > 0)
         {
             return Integer.parseInt(name.substring(0, index));
         } else
@@ -113,36 +102,49 @@ public class Main implements SignalHandler
         URL location = PROTECTION_DOMAIN.getCodeSource().getLocation();
         return URLDecoder.decode(location.getPath(), "UTF-8");
     }
+
+    private static void addShutdownHook()
+    {
+        Runtime.getRuntime().addShutdownHook(new Thread()
+        {
+            @Override
+            public void run()
+            {
+                try
+                {
+                    info("hook~~");
+                    shutdown();
+                } catch(Exception e)
+                {
+                    e.printStackTrace();
+                }
+            }
+        });
+    }
     //endregion
 
     public static void main(String... args)
     {
         try
         {
-            collectArgs(args);
+            addShutdownHook();
+            lock();
             if(args.length > 0)
             {
                 String cmd = args[0];
                 switch(cmd)
                 {
-                    case "on":
                     case "start":
-                    case "startup":
-                        startup();
+                        startup(args);
                         break;
-                    case "re":
-                    case "restart":
-                        restart();
-                        break;
-                    case "off":
                     case "stop":
-                    case "shutdown":
-                        shutdown();
+                        shutdown(args);
                         break;
-                    case "stat":
-                    case "state":
-                    case "status":
-                        status();
+                    case "kill":
+                        kill(args);
+                        break;
+                    case "list":
+                        list();
                         break;
                     case "h":
                     case "help":
@@ -155,83 +157,109 @@ public class Main implements SignalHandler
             {
                 help();
             }
+            clean();
         } catch(Exception e)
         {
+            error("ERROR: " + e.getMessage());
             e.printStackTrace();
+        } finally
+        {
+            unlock();
         }
     }
 
     //region Main Functions
-    private static void startup()
+    private static void startup(String... args)
             throws Exception
     {
-        int pid = readPID();
-        if(pid < 0)
-        {
-            info("starting");
-            savePid();
-            prepareWorkDir();
-            int port = getPort();
-            info("########## Current PID   = " + CUR_PID);
-            info("########## Servlet Port  = " + port);
-            info("########## Work Directory= " + WORK_DIR);
-            info("########## WAR Filename  = " + WAR_FILENAME);
-            initServer(port);
-            JETTY_SERVER.start();
-            JETTY_SERVER.join();
-            info("Server Stopped.");
-            dispose();
-        } else
-        {
-            error("Already startup.");
-        }
+        int port = getPort(args);
+        String ctx = getContextPath(args);
+        String id = getInstanceId(args);
+        logo();
+        info();
+        info("******** Process ID(PID): " + CUR_PID);
+        info("******** Instance ID    : " + id);
+        info("******** Servlet Port   : " + port);
+        info("******** Context Path   : " + ctx);
+        info("******** Work Directory : " + WORK_DIR);
+        info("******** WAR Filename   : " + WAR_FILENAME);
+        prepareWorkDir();
+        initServer(port, ctx);
+        JETTY_SERVER.start();
+        saveInstance(port, id, ctx);
+        unlock();
+        JETTY_SERVER.join();
+        removeCurrent();
+        info("Server Stopped.");
     }
 
-    private static void restart()
+    private static void shutdown(String... args)
             throws Exception
     {
-        int pid = readPID();
-        if(pid == -1 || pid == CUR_PID)
+        if(args.length > 0)
         {
-            shutdown();
-            startup();
-        } else
-        {
-            sign(SIGN_RESTART, pid);
-        }
-    }
-
-    private static void shutdown()
-            throws Exception
-    {
-        int pid = readPID();
-        if(pid == -1 || pid == CUR_PID)
-        {
-            if(JETTY_SERVER.isRunning() || JETTY_SERVER.isStarted() || JETTY_SERVER.isStarting())
+            Map<Integer, ServerInstance> map = readPid();
+            String[] targetIds = getStoppingIds(args);
+            for(String id : targetIds)
             {
-                JETTY_SERVER.stop();
-            } else
-            {
-                info("Not running");
-                dispose();
+                for(Map.Entry<Integer, ServerInstance> entry : map.entrySet())
+                {
+                    int pid = entry.getKey();
+                    ServerInstance inst = entry.getValue();
+                    if(id.equals(inst.id))
+                    {
+                        if(pid == CUR_PID)
+                        {
+                            stopJetty();
+                        } else
+                        {
+                            sign(SIGN_TERM, pid);
+                        }
+                    }
+                }
             }
         } else
         {
-            sign(SIGN_SHUTDOWN, pid);
+            kill();
         }
     }
 
-    private static void status()
-            throws IOException
+    private static void kill(String... args)
+            throws Exception
     {
-        int pid = readPID();
-        if(pid == -1)
+        Map<Integer, ServerInstance> map = readPid();
+        if(args.length > 0)
         {
-            info("OFF");
-            dispose();
+            int[] targetPids = getKillingPids(args);
+            for(int pid : targetPids)
+            {
+                if(map.containsKey(pid))
+                {
+                    sign(SIGN_TERM, pid);
+                }
+            }
         } else
         {
-            info(String.format("ON(%d)", pid));
+            map.keySet().forEach(pid->sign(SIGN_TERM, pid));
+        }
+    }
+
+    private static void list()
+            throws IOException
+    {
+        Map<Integer, ServerInstance> map = readPid();
+        if(map != null && !map.isEmpty())
+        {
+            String doubleLine = "============================================================";
+            String singleLine = "------------------------------------------------------------";
+            info(doubleLine);
+            info("PID\t\tPORT\t\tCONTEXT\t\tID");
+            info(singleLine);
+            map.forEach((pid, inst)->info(String.format("%d\t\t%d\t\t%s\t\t%s", pid, inst.port, inst.ctx, inst.id)));
+            info(doubleLine);
+        } else
+        {
+            info("No instance is running.");
         }
     }
 
@@ -244,52 +272,55 @@ public class Main implements SignalHandler
 
     private static void help()
     {
-        String double_line = "=========================================================================";
-        String single_line = "-------------------------------------------------------------------------";
-        String dotted_line = "-  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -";
-        info(double_line);
+        String doubleLine = "===========================================================================================";
+        String singleLine = "-------------------------------------------------------------------------------------------";
+        String dottedLine = "·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·";
+        info(doubleLine);
         info(PROJECT_NAME + " User Manual");
-        info(dotted_line);
+        info(dottedLine);
         info("Usage:");
         info();
-        info("  [Command]            [Options]  [Default]  [Description]");
-        info(single_line);
-        info("   on|start|startup                           Start the server.");
-        info("                        port       8080       Port number.(1025,65535]");
-        info("                        cxt        ROOT       Context path.{input}");
-        info(single_line);
-        info("   re|restart                                 Restart the server.");
-        info(single_line);
-        info("   off|stop|shutdown                          Stop the server.");
-        info(single_line);
-        info("   stat|state|status                          View the server status.");
-        info(single_line);
-        info("   help|h                                     Display help info.");
-        info(double_line);
+        info("  <Command>    <Options>           <Description>");
+        info(singleLine);
+        info("   start                            Start a new server instance.");
+        info("                [port=?]            Port number(1025,65535]. Default: 8080.");
+        info("                [ctx=?]             Context path. Default: ROOT.");
+        info("                [id=?]              Unique identification for the instance. Default: None.");
+        info(singleLine);
+        info("   stop                             Stop instance(s) associated with the specified ids.");
+        info("                [id1] [id2]...      Default: all.");
+        info(singleLine);
+        info("   kill                             Stop instance(s) associated with the specified ids.");
+        info("                [pid1] [pid2]...    Default: all.");
+        info(singleLine);
+        info("   list                             List all running instances.");
+        info(singleLine);
+        info("   help|h                           Display help info.");
+        info(doubleLine);
     }
     //endregion
-
     //region Assistants For Main Functions.
-    private static void savePid()
-            throws IOException
-    {
-        PID_FILE.writeInt(CUR_PID);
-    }
 
-    private static void collectArgs(String... args)
-            throws Exception
+    private static void logo()
     {
-        if(args.length == 2)
-        {
-            String arg = args[1];
-            int index = arg.indexOf('=');
-            String name = arg.substring(0, index);
-            String value = arg.substring(index + 1);
-            ARGS.put(name, value.isEmpty() ? "" : value);
-        } else if(args.length > 2)
-        {
-            throw new Exception("Too many arguments!");
-        }
+        info("       ****                                                                                         ");
+        info("     ********                                                                                       ");
+        info("    **********                                                                                      ");
+        info("    **     **                                               **           **                       ");
+        info("   ***                                         **           **           **                       ");
+        info("   ****           ********      *******      ******      ********     ********      ***    ***    ");
+        info("    *******       *********     ********     *******     ********     ********      ***    ***    ");
+        info("     ********      **    **      **   **    ***   ***       **           **          ***   **     ");
+        info("        ******     **    ***     **         **     **       **           **           **   **     ");
+        info("           ***     **    ***     **         *********       **           **           *** ***     ");
+        info("   **       **     **    ***     **         *********       **           **            *****      ");
+        info("   ***     ***     **    **      **         **    ***       **   **      **   **       *****      ");
+        info("   ***********     ***  ***      **         ***  ****       *** ***      *** ***        ***       ");
+        info("    *********      *******       **          *******        *****        *****         ***        ");
+        info("      *****        ******       ****           ***           ****         ****        ***         ");
+        info("                   **                                                               ****          ");
+        info("                   **                                                               ***           ");
+        info("                  ****                                                                              ");
     }
 
     private static void prepareWorkDir()
@@ -301,10 +332,10 @@ public class Main implements SignalHandler
         }
     }
 
-    private static void initServer(int port)
+    private static void initServer(int port, String contextPah)
             throws Exception
     {
-        WebAppContext webApp = createWebApp();
+        WebAppContext webApp = createWebApp(contextPah);
         NetworkTrafficServerConnector connector = new NetworkTrafficServerConnector(JETTY_SERVER);
         connector.setPort(port);
         connector.setSoLingerTime(-1);
@@ -313,12 +344,12 @@ public class Main implements SignalHandler
         JETTY_SERVER.setHandler(webApp);
     }
 
-    private static WebAppContext createWebApp()
+    private static WebAppContext createWebApp(String contextPah)
             throws Exception
     {
         WebAppContext webApp = new WebAppContext();
         webApp.setInitParameter("org.eclipse.jetty.servlet.Default.dirAllowed", "false");
-        webApp.setContextPath(getContextPath());
+        webApp.setContextPath(contextPah);
         webApp.setCopyWebDir(true);
         webApp.setPersistTempDirectory(false);
         webApp.setTempDirectory(WORK_DIR);
@@ -326,69 +357,324 @@ public class Main implements SignalHandler
         return webApp;
     }
 
-    private static int getPort()
+    private static int getPort(String... args)
             throws Exception
     {
-        String portString = ARGS.get("port");
-        if(portString != null)
+        for(String arg : args)
         {
-            int port = Integer.parseInt(portString);
-            if(port > 1024 && port <= 65535)
+            if(arg.startsWith("port="))
             {
-                return port;
+                String portString = arg.substring(arg.indexOf('=') + 1);
+                int port = Integer.parseInt(portString);
+                if(port > 1024 && port <= 65535)
+                {
+                    return port;
+                } else
+                {
+                    throw new IllegalArgumentException(String.format("Bad port number -> %s", portString));
+                }
+            }
+        }
+        return 8080;
+    }
+
+    private static String getContextPath(String... args)
+            throws Exception
+    {
+        for(String arg : args)
+        {
+            if(arg.startsWith("ctx="))
+            {
+                String ctx = arg.substring(arg.indexOf('=') + 1);
+                if(REG_CONTEXT.matcher(ctx).matches())
+                {
+                    String _ctx = ctx.substring(ctx.indexOf('/') + 1);
+                    return _ctx.isEmpty() || _ctx.equalsIgnoreCase("ROOT") ? "/" : '/' + _ctx;
+                } else
+                {
+                    throw new IllegalArgumentException(String.format("Invalid context path -> %s!", ctx));
+                }
+            }
+        }
+        return "/";
+    }
+
+    private static String getInstanceId(String[] args)
+            throws Exception
+    {
+        for(String arg : args)
+        {
+            if(arg.startsWith("id="))
+            {
+                String id = arg.substring(arg.indexOf('=') + 1);
+                if(REG_INST_ID.matcher(id).matches())
+                {
+                    return id;
+                } else
+                {
+                    throw new IllegalArgumentException(String.format("Invalid instance id -> %s!", id));
+                }
+            }
+        }
+        return DEFAULT_ID;
+    }
+
+    private static String[] getStoppingIds(String... args)
+    {
+        int argSize = args.length;
+        String[] result = new String[argSize];
+        for(int i = 0; i < argSize; i++)
+        {
+            String arg = args[i];
+            if(REG_INST_ID.matcher(arg).matches())
+            {
+                result[i] = arg;
             } else
             {
-                throw new IllegalArgumentException(String.format("Bad port number -> %s", port));
+                error(String.format("Invalid id -> %s! Ignored.", arg));
+            }
+        }
+        return result;
+    }
+
+    private static int[] getKillingPids(String... args)
+    {
+        int argSize = args.length;
+        int[] result = new int[argSize];
+        for(int i = 0; i < argSize; i++)
+        {
+            String arg = args[i];
+            try
+            {
+                int pid = Integer.parseInt(arg);
+                if(pid > 1)
+                {
+                    result[i] = pid;
+                }
+            } catch(Exception e)
+            {
+                error(String.format("Invalid pid number -> %s! Ignored.", arg));
+            }
+        }
+        return result;
+    }
+
+    private static void saveInstance(int port, String id, String ctx)
+            throws Exception
+    {
+        if(PID_CHANNEL != null && PID_CHANNEL.isOpen())
+        {
+            try
+            {
+                Map<Integer, ServerInstance> map = readPid();
+                map.put(CUR_PID, new ServerInstance(port, id, ctx));
+                writeMap(map);
+            } catch(Exception e)
+            {
+                e.printStackTrace();
             }
         } else
         {
-            return 8080;
+            throw new IllegalStateException("Unable to access pid file!");
         }
     }
 
-    private static String getContextPath()
+    private static void removeCurrent()
             throws Exception
     {
-        String ctx = ARGS.get("ctx");
-        if(ctx == null)
-        {
-            return "/";
-        }
-        if(!REG_CONTEXT.matcher(ctx).matches())
-        {
-            throw new IllegalArgumentException(String.format("Invalid context path -> %s!", ctx));
-        }
-        String _ctx = ctx.substring('/');
-        if(_ctx.isEmpty() || _ctx.equalsIgnoreCase("ROOT"))
-        {
-            return "/";
-        }
-        return '/' + _ctx;
+        removeInstanceByPid(CUR_PID);
     }
 
-    private static int readPID()
+    private static void removeInstanceByPid(int pid)
+            throws Exception
+    {
+        lock();
+        if(pid > 0)
+        {
+            Map<Integer, ServerInstance> map = readPid();
+            map.remove(pid);
+            writeMap(map);
+        }
+    }
+
+    private static void removeInstanceById(String id)
+            throws Exception
+    {
+        if(id != null && !id.isEmpty())
+        {
+            Map<Integer, ServerInstance> map = readPid();
+            for(Map.Entry<Integer, ServerInstance> entry : map.entrySet())
+            {
+                Integer pid = entry.getKey();
+                ServerInstance instance = entry.getValue();
+                if(id.equals(instance.id))
+                {
+                    map.remove(pid);
+                }
+            }
+            writeMap(map);
+        }
+    }
+
+    private static void writeMap(Map<Integer, ServerInstance> map)
+            throws Exception
+    {
+        Set<String> set = new HashSet<>();
+        for(Map.Entry<Integer, ServerInstance> entry : map.entrySet())
+        {
+            Integer pid = entry.getKey();
+            ServerInstance instance = entry.getValue();
+            set.add(String.format("%d,%d,%s,%s", pid, instance.port, instance.id, instance.ctx));
+        }
+        String[] newArray = new String[map.size()];
+        set.toArray(newArray);
+        String newData = String.join("|", (CharSequence[])newArray);
+        byte[] bytes = newData.getBytes();
+        ByteBuffer buffer = ByteBuffer.wrap(bytes);
+        PID_CHANNEL.truncate(0);
+        PID_CHANNEL.write(buffer);
+    }
+
+    private static Map<Integer, ServerInstance> readPid()
             throws IOException
     {
-        if(PID_FILE != null)
+        int fileSize = (int)PID_CHANNEL.size();
+        ByteBuffer buffer = ByteBuffer.allocate(fileSize);
+        PID_CHANNEL.position(0);
+        int read = PID_CHANNEL.read(buffer);
+        buffer.flip();
+        String data = new String(buffer.array());
+        String[] dataArray = data.split("\\|");
+        Map<Integer, ServerInstance> result = new HashMap<>(dataArray.length);
+        for(String item : dataArray)
         {
-            PID_FILE.seek(0);
-            long length = PID_FILE.length();
-            return length < 4 ? -1 : PID_FILE.readInt();
+            String[] array = item.split(",");
+            if(array.length == 4)
+            {
+                Integer pid = Integer.valueOf(array[0]);
+                Integer port = Integer.valueOf(array[1]);
+                String id = array[2];
+                String ctx = array[3];
+                result.put(pid, new ServerInstance(port, id, ctx));
+            }
+        }
+        return result;
+    }
+
+    private static void lock()
+            throws IOException
+    {
+        RandomAccessFile pidFile = new RandomAccessFile(PID_FILENAME, "rw");
+        PID_CHANNEL = pidFile.getChannel();
+        PID_LOCK = PID_CHANNEL.lock();
+    }
+
+    private static void unlock()
+    {
+        if(PID_LOCK != null)
+        {
+            try
+            {
+                PID_LOCK.release();
+            } catch(IOException e)
+            {
+                e.printStackTrace();
+            }
+        }
+        if(PID_CHANNEL != null)
+        {
+            try
+            {
+                PID_CHANNEL.close();
+            } catch(IOException e)
+            {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private static boolean isRunning()
+    {
+        return JETTY_SERVER.isRunning() || JETTY_SERVER.isStarted() || JETTY_SERVER.isStarting();
+    }
+
+    private static void stopJetty()
+            throws Exception
+    {
+        if(isRunning())
+        {
+            JETTY_SERVER.stop();
         } else
         {
-            throw new IllegalStateException("PID file is null!");
+            info("Not running");
         }
     }
 
-    private static void dispose()
-            throws IOException
+    private static void clean()
+            throws Exception
     {
-        if(PID_FILE != null)
+        Map<Integer, ServerInstance> map = readPid();
+        Iterator<Integer> iterator = map.keySet().iterator();
+        while(iterator.hasNext())
         {
-            PID_FILE.close();
+            Integer pid = iterator.next();
+            if(pid != null)
+            {
+                if(!isProcessExist(pid))
+                {
+                    info(String.format("Process '%d' has been shutdown. Removing...", pid));
+                    iterator.remove();
+                    removeInstanceByPid(pid);
+                }
+            }
         }
-        File file = new File(PID_FILENAME);
-        file.deleteOnExit();
+        if(map.isEmpty())
+        {
+            File file = new File(PID_FILENAME);
+            file.deleteOnExit();
+        }
+    }
+
+    public static boolean isProcessExist(int pid)
+    {
+        try
+        {
+            Process process;
+            if(isLinux())
+            {
+                process = Runtime.getRuntime().exec(new String[]{"/bin/sh", "-c", "ps -e|grep " + pid});
+            } else if(isWindows())
+            {
+                process = Runtime.getRuntime().exec("tasklist");
+            } else
+            {
+                throw new IllegalStateException("Unsupported OS!");
+            }
+            BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            String string = bufferedReader.readLine();
+            while(string != null)
+            {
+                if(string.contains("java") && string.contains(String.valueOf(pid)))
+                {
+                    return true;
+                }
+                string = bufferedReader.readLine();
+            }
+            return false;
+        } catch(IOException e)
+        {
+            throw new IllegalStateException(String.format("Failed to check process(%d) list.", pid));
+        }
+    }
+
+    private static boolean isLinux()
+    {
+        return OS_NAME.contains("Linux");
+    }
+
+    private static boolean isWindows()
+    {
+        return OS_NAME.contains("Windows");
     }
 
     private static void info()
@@ -458,29 +744,17 @@ public class Main implements SignalHandler
         return false;
     }
 
-    @Override
-    public void handle(Signal signal)
+    private static class ServerInstance
     {
-        try
+        public String ctx;
+        private int port;
+        private String id;
+
+        public ServerInstance(int port, String id, String ctx)
         {
-            switch(signal.getNumber())
-            {
-                case SIGN_RESTART:
-                    restart();
-                    break;
-                case SIGN_SHUTDOWN:
-                case SIGN_STOP:
-                case SIGN_KILL:
-                    shutdown();
-                    break;
-                case SIGN_STATUS:
-                    status();
-                    break;
-            }
-        } catch(Exception e)
-        {
-            error(String.format("Error occurred while handle signal -> %s.", signal));
-            e.printStackTrace();
+            this.port = port;
+            this.id = id;
+            this.ctx = ctx;
         }
     }
     //endregion
