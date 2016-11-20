@@ -52,7 +52,6 @@ public class Main
     private static final ProtectionDomain PROTECTION_DOMAIN = Main.class.getProtectionDomain();
     private static final Server JETTY_SERVER = new Server();
     private static final int SIGN_TERM = 15;
-    private static final int SIGN_KILL = 9;
     private static final File WORK_DIR;
     private static final String PID_FILENAME;
     private static final String WAR_FILENAME;
@@ -541,7 +540,6 @@ public class Main
         int fileSize = (int)PID_CHANNEL.size();
         ByteBuffer buffer = ByteBuffer.allocate(fileSize);
         PID_CHANNEL.position(0);
-        int read = PID_CHANNEL.read(buffer);
         buffer.flip();
         String data = new String(buffer.array());
         String[] dataArray = data.split("\\|");
