@@ -21,7 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-package cn.sel.spretty;
+package cn.sel.wetty;
 
 import org.eclipse.jetty.server.NetworkTrafficServerConnector;
 import org.eclipse.jetty.server.Server;
@@ -45,11 +45,11 @@ public class Main
 {
     //region Constants & Fields
     private static final String OS_NAME = System.getProperty("os.name");
-    private static final String PROJECT_NAME = "Spretty";
+    private static final String PROJECT_NAME = "Wetty";
     private static final String DEFAULT_ID = "UNKNOWN_ID";
     private static final Pattern REG_INST_ID = Pattern.compile("[A-Za-z0-9]{1,32}");
     private static final Pattern REG_CONTEXT = Pattern.compile("[/]?[A-Za-z][A-Za-z0-9_-]*");
-    private static final ProtectionDomain PROTECTION_DOMAIN = Main.class.getProtectionDomain();
+    private static final ProtectionDomain DOMAIN = Main.class.getProtectionDomain();
     private static final Server JETTY_SERVER = new Server();
     private static final int SIGN_TERM = 15;
     private static final File WORK_DIR;
@@ -98,7 +98,7 @@ public class Main
     private static String getWarFilename()
             throws UnsupportedEncodingException
     {
-        URL location = PROTECTION_DOMAIN.getCodeSource().getLocation();
+        URL location = DOMAIN.getCodeSource().getLocation();
         return URLDecoder.decode(location.getPath(), "UTF-8");
     }
 
@@ -298,28 +298,10 @@ public class Main
         info(doubleLine);
     }
     //endregion
-    //region Assistants For Main Functions.
 
+    //region Assistants For Main Functions.
     private static void logo()
     {
-        info("       ****                                                                                         ");
-        info("     ********                                                                                       ");
-        info("    **********                                                                                      ");
-        info("    **     **                                               **           **                       ");
-        info("   ***                                         **           **           **                       ");
-        info("   ****           ********      *******      ******      ********     ********      ***    ***    ");
-        info("    *******       *********     ********     *******     ********     ********      ***    ***    ");
-        info("     ********      **    **      **   **    ***   ***       **           **          ***   **     ");
-        info("        ******     **    ***     **         **     **       **           **           **   **     ");
-        info("           ***     **    ***     **         *********       **           **           *** ***     ");
-        info("   **       **     **    ***     **         *********       **           **            *****      ");
-        info("   ***     ***     **    **      **         **    ***       **   **      **   **       *****      ");
-        info("   ***********     ***  ***      **         ***  ****       *** ***      *** ***        ***       ");
-        info("    *********      *******       **          *******        *****        *****         ***        ");
-        info("      *****        ******       ****           ***           ****         ****        ***         ");
-        info("                   **                                                               ****          ");
-        info("                   **                                                               ***           ");
-        info("                  ****                                                                              ");
     }
 
     private static void prepareWorkDir()

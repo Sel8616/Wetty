@@ -21,54 +21,25 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-package cn.sel.spretty.entity;
+package cn.sel.wetty.service;
+
+import cn.sel.wetty.entity.TestEntity;
+import org.springframework.stereotype.Component;
 
 import java.util.Date;
 
-public class TestEntity
+@Component
+public class TestService
 {
-    private int id;
-    private String string;
-    private Date date;
+    private static final String MSG = "Wetty";
 
-    public TestEntity()
+    public String getMessage()
     {
+        return MSG;
     }
 
-    public TestEntity(int id, String string, Date date)
+    public TestEntity getObject()
     {
-        this.id = id;
-        this.string = string;
-        this.date = date;
-    }
-
-    public int getId()
-    {
-        return id;
-    }
-
-    public void setId(int id)
-    {
-        this.id = id;
-    }
-
-    public String getString()
-    {
-        return string;
-    }
-
-    public void setString(String string)
-    {
-        this.string = string;
-    }
-
-    public Date getDate()
-    {
-        return date;
-    }
-
-    public void setDate(Date date)
-    {
-        this.date = date;
+        return new TestEntity(123, MSG, new Date());
     }
 }

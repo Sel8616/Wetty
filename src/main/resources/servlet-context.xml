@@ -33,7 +33,7 @@
              http://www.springframework.org/schema/mvc
              http://www.springframework.org/schema/mvc/spring-mvc.xsd">
     <context:annotation-config/>
-    <context:component-scan base-package="cn.sel.spretty"/>
+    <context:component-scan base-package="cn.sel.wetty"/>
     <mvc:annotation-driven/>
     <mvc:default-servlet-handler/>
     <bean class="org.springframework.web.servlet.view.InternalResourceViewResolver">
@@ -64,7 +64,7 @@
     <mvc:interceptors>
         <mvc:interceptor>
             <mvc:mapping path="/**"/>
-            <bean class="cn.sel.spretty.interceptor.AccessLogger"/>
+            <bean class="cn.sel.wetty.interceptor.AccessLogger"/>
         </mvc:interceptor>
     </mvc:interceptors>
 </beans>

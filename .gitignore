@@ -3,7 +3,8 @@ out
 .gradle
 .idea/*
 !.idea/.name
-!.idea/vcs.xml
 !.idea/gradle.xml
-!.idea/encodings.xml
 !.idea/copyright
+!.idea/dictionaries
+!.idea/encodings.xml
+!.idea/vcs.xml
